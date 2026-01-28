@@ -284,7 +284,7 @@ async def run_session(phone, country, proxy):
                 if not BOT_RUNNING: print_stats("STOPPED"); await browser.close(); return "stopped"
                 await page.goto(BASE_URL, timeout=60000) # ٹائم آؤٹ کم کر دیا تاکہ جلدی پتہ چلے
                 log_msg("⏳ Page Load Wait (3s)...", level="step")
-                await asyncio.sleep(3) 
+                await asyncio.sleep(7) 
                 await capture_step(page, "01_Loaded")
             except: 
                 print_stats("TIMEOUT"); await browser.close(); return "retry"
