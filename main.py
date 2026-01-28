@@ -233,7 +233,12 @@ async def master_loop():
         await asyncio.sleep(2)
 
 async def run_session(phone, country, proxy):
+    # ڈیٹا ٹریک کرنے کے لیے
     network_usage = {"bytes": 0}
+    
+    # 🔥 SMART SWITCH: تصاویر کو کنٹرول کرنے کا بٹن
+    # شروع میں یہ True ہے، مطلب تصاویر بلاک رہیں گی۔
+    state = {"block_images": True} 
 
     def print_stats(status_label):
         total_kb = network_usage["bytes"] / 1024
@@ -248,7 +253,7 @@ async def run_session(phone, country, proxy):
             }
             if proxy: launch_args["proxy"] = proxy 
 
-            log_msg("🚀 Launching (Aggressive Mode)...", level="step")
+            log_msg("🚀 Launching (CSS Allowed, Images Smart Block)...", level="step")
             try: browser = await p.chromium.launch(**launch_args)
             except Exception as e: log_msg(f"❌ Proxy Fail: {e}", level="main"); return "retry"
 
@@ -259,6 +264,34 @@ async def run_session(phone, country, proxy):
             context = await browser.new_context(**pixel_5, locale="en-US", ignore_https_errors=True)
             page = await context.new_page()
 
+            # --- 🔥 NETWORKING LOGIC 🔥 ---
+            async def handle_route(route):
+                try:
+                    r_type = route.request.resource_type
+                    
+                    # 1. صرف فونٹس اور میڈیا (ویڈیو/آڈیو) کو بلاک کریں
+                    # CSS (stylesheet) کو یہاں سے نکال دیا ہے تاکہ پیج وائٹ نہ ہو۔
+                    if r_type in ["font", "media"]:
+                        await route.abort()
+                        return
+
+                    # 2. تصاویر کا فیصلہ اسٹیج کے حساب سے ہوگا
+                    if r_type == "image":
+                        if state["block_images"]:
+                            # جب تک DOB نہیں ہوتا، ہر تصویر بلاک (Data Saved!)
+                            await route.abort()
+                            return
+                        else:
+                            # DOB کے بعد تصاویر اوپن (کیپچا کے لیے)
+                            await route.continue_()
+                            return
+
+                    # باقی سب (JS, CSS, HTML, XHR) جانے دو
+                    await route.continue_()
+                except: 
+                    try: await route.continue_()
+                    except: pass
+
             async def count_data(request):
                 try:
                     sizes = await request.sizes()
@@ -267,24 +300,18 @@ async def run_session(phone, country, proxy):
                     network_usage["bytes"] += usage
                 except: pass
 
+            # راؤٹنگ اور ٹریکنگ آن کریں
+            await page.route("**/*", handle_route)
             page.on("requestfinished", count_data)
 
-            # 🔥🔥🔥 AGGRESSIVE BLOCKING (CSS + FONTS + MEDIA) 🔥🔥🔥
-            # ہم 'image' کو بھی بلاک کر رہے ہیں مگر کچھ اہم Images (جیسے کیپچا) کو اجازت دیں گے۔
-            await page.route("**/*", lambda route: route.abort() 
-                if route.request.resource_type in ["font", "media", "stylesheet", "other"] 
-                # نوٹ: اگر کیپچا نظر نہ آئے تو نیچے والی لائن میں 'image' ہٹا دیجئے گا۔
-                or (route.request.resource_type == "image" and "captcha" not in route.request.url and "svg" not in route.request.url)
-                else route.continue_()
-            )
 
             # --- STEP 1: LOAD URL ---
             log_msg("🌐 Opening URL...", level="step")
             try:
                 if not BOT_RUNNING: print_stats("STOPPED"); await browser.close(); return "stopped"
-                await page.goto(BASE_URL, timeout=60000) # ٹائم آؤٹ کم کر دیا تاکہ جلدی پتہ چلے
+                await page.goto(BASE_URL, timeout=60000)
                 log_msg("⏳ Page Load Wait (3s)...", level="step")
-                await asyncio.sleep(7) 
+                await asyncio.sleep(3) 
                 await capture_step(page, "01_Loaded")
             except: 
                 print_stats("TIMEOUT"); await browser.close(); return "retry"
@@ -302,9 +329,15 @@ async def run_session(phone, country, proxy):
             if not await smart_action(page, lambda: page.get_by_text("Agree", exact=False).last, lambda: page.get_by_text("Date of birth", exact=False), "Agree_Last", wait_after=3): 
                 print_stats("FAIL: Agree"); await browser.close(); return "retry"
 
-            # --- STEP 4: DOB ---
+            # --- STEP 4: DOB (CRITICAL POINT) ---
             if not await smart_action(page, lambda: page.get_by_text("Next", exact=False).last, lambda: page.get_by_text("Use phone number", exact=False), "DOB_Next_Text", wait_after=3): 
                 print_stats("FAIL: DOB"); await browser.close(); return "retry"
+            
+            # 🔥🔥🔥 IMAGE UNLOCKER 🔥🔥🔥
+            # یہاں DOB ہو گیا ہے، اب ہم تصاویر کھول دیں گے تاکہ آگے کیپچا نظر آئے
+            log_msg("🔓 DOB Passed: Enabling Images for Captcha...", level="step")
+            state["block_images"] = False 
+
 
             # --- STEP 5: PHONE TAB ---
             if not await smart_action(page, lambda: page.get_by_text("Use phone number", exact=False), lambda: page.get_by_text("Country/Region"), "UsePhone_Text", wait_after=3): 
@@ -313,7 +346,6 @@ async def run_session(phone, country, proxy):
             # --- STEP 6: COUNTRY ---
             log_msg(f"🌍 Selecting {country}...", level="step")
             
-            # CSS بلاک ہونے کی وجہ سے شاید ڈراپ ڈاؤن نظر نہ آئے، اس لیے ہم ڈائریکٹ سرچ ٹرائی کریں گے
             if not await smart_action(page, lambda: page.get_by_text("Hong Kong", exact=False).or_(page.locator(".arrow-icon").first), lambda: page.get_by_placeholder("Search", exact=False), "Open_Country_List", wait_after=2): 
                 print_stats("FAIL: Country List"); await browser.close(); return "retry"
 
@@ -351,6 +383,8 @@ async def run_session(phone, country, proxy):
                 if await get_code.count() > 0:
                     await click_element(page, lambda: get_code.first, "Get Code Button")
                     log_msg("⏳ Waiting for Response...", level="main")
+                    
+                    # یہاں تصاویر اب آن ہیں، تو کیپچا لوڈ ہونا چاہیے
                     await asyncio.sleep(5); await capture_step(page, "06_Check_Resp")
 
                     if await page.get_by_text("An unexpected problem", exact=False).count() > 0:
@@ -360,7 +394,7 @@ async def run_session(phone, country, proxy):
                     result = "failed"
                     start_solve_time = time.time()
                     while BOT_RUNNING:
-                        if time.time() - start_solve_time > 60: break # ٹائم کم کر دیا
+                        if time.time() - start_solve_time > 60: break
 
                         if await page.get_by_text("swap 2 tiles", exact=False).count() > 0:
                             log_msg("🧩 CAPTCHA FOUND!", level="main")
