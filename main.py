@@ -233,8 +233,15 @@ async def master_loop():
         await asyncio.sleep(2)
 
 async def run_session(phone, country, proxy):
-    # ڈیٹا ٹریک کرنے کے لیے لوکل ویری ایبل
+    # ڈیٹا ٹریک کرنے کے لیے ویری ایبل
     network_usage = {"bytes": 0}
+
+    # 📊 اسٹیٹس پرنٹ کرنے کا انٹرنل فنکشن (تاکہ بار بار کوڈ نہ لکھنا پڑے)
+    def print_stats(status_label):
+        total_kb = network_usage["bytes"] / 1024
+        total_mb = total_kb / 1024
+        # یہ لائن کنسول میں پرنٹ ہوگی ہر بار جب براؤزر بند ہوگا
+        log_msg(f"📉 {status_label} | Data: {total_kb:.2f} KB ({total_mb:.3f} MB)", level="main")
 
     try:
         async with async_playwright() as p:
@@ -258,13 +265,10 @@ async def run_session(phone, country, proxy):
             context = await browser.new_context(**pixel_5, locale="en-US", ignore_https_errors=True)
             page = await context.new_page()
 
-            # --- 🔥🔥🔥 DATA TRACKER & BANDWIDTH SAVER 🔥🔥🔥 ---
-
-            # 1. نیٹ ورک ڈیٹا گننے کا فنکشن
+            # --- 🔥 DATA TRACKER (ہر ریکویسٹ کا سائز گننا) ---
             async def count_data(request):
                 try:
                     sizes = await request.sizes()
-                    # ریکویسٹ اور ریسپانس کے ہیڈرز اور باڈی سب کا سائز جمع کریں
                     usage = (sizes.get('requestHeadersSize', 0) + 
                              sizes.get('requestBodySize', 0) + 
                              sizes.get('responseHeadersSize', 0) + 
@@ -274,7 +278,7 @@ async def run_session(phone, country, proxy):
 
             page.on("requestfinished", count_data)
 
-            # 2. بینڈوتھ سیور (فونٹس اور میڈیا بلاک کرنا)
+            # --- 🔥 BANDWIDTH SAVER (میڈیا بلاکنگ) ---
             await page.route("**/*", lambda route: route.abort() 
                 if route.request.resource_type in ["font", "media"] 
                 else route.continue_()
@@ -283,25 +287,23 @@ async def run_session(phone, country, proxy):
             # --- STEP 1: LOAD URL ---
             log_msg("🌐 Opening URL...", level="step")
             try:
-                if not BOT_RUNNING: return "stopped"
+                if not BOT_RUNNING: 
+                    print_stats("STOPPED")
+                    await browser.close(); return "stopped"
+                
                 await page.goto(BASE_URL, timeout=90000)
                 log_msg("⏳ Page Load Wait (5s)...", level="step")
                 await asyncio.sleep(5) 
                 await capture_step(page, "01_Loaded")
             except: 
+                print_stats("TIMEOUT") # اگر پیج لوڈ نہ ہو تو یہاں پرنٹ ہوگا
                 await browser.close()
                 return "retry"
 
             # --- STEP 2: REGISTER ---
-            if not await smart_action(
-                page, 
-                lambda: page.get_by_text("Register", exact=True), 
-                lambda: page.get_by_text("Stay informed", exact=False), 
-                "Register_Text",
-                wait_after=5
-            ): 
-                await browser.close()
-                return "retry"
+            if not await smart_action(page, lambda: page.get_by_text("Register", exact=True), lambda: page.get_by_text("Stay informed", exact=False), "Register_Text", wait_after=5): 
+                print_stats("FAIL: Register")
+                await browser.close(); return "retry"
 
             # --- STEP 3: AGREE ---
             cb = page.get_by_text("Stay informed", exact=False)
@@ -309,50 +311,26 @@ async def run_session(phone, country, proxy):
                 await click_element(page, lambda: cb, "Stay Informed Checkbox")
                 await asyncio.sleep(1)
             
-            if not await smart_action(
-                page,
-                lambda: page.get_by_text("Agree", exact=False).last, 
-                lambda: page.get_by_text("Date of birth", exact=False),
-                "Agree_Last",
-                wait_after=5
-            ): 
-                await browser.close()
-                return "retry"
+            if not await smart_action(page, lambda: page.get_by_text("Agree", exact=False).last, lambda: page.get_by_text("Date of birth", exact=False), "Agree_Last", wait_after=5): 
+                print_stats("FAIL: Agree")
+                await browser.close(); return "retry"
 
             # --- STEP 4: DOB ---
-            if not await smart_action(
-                page,
-                lambda: page.get_by_text("Next", exact=False).last, 
-                lambda: page.get_by_text("Use phone number", exact=False),
-                "DOB_Next_Text",
-                wait_after=5
-            ): 
-                await browser.close()
-                return "retry"
+            if not await smart_action(page, lambda: page.get_by_text("Next", exact=False).last, lambda: page.get_by_text("Use phone number", exact=False), "DOB_Next_Text", wait_after=5): 
+                print_stats("FAIL: DOB")
+                await browser.close(); return "retry"
 
             # --- STEP 5: PHONE TAB ---
-            if not await smart_action(
-                page,
-                lambda: page.get_by_text("Use phone number", exact=False),
-                lambda: page.get_by_text("Country/Region"), 
-                "UsePhone_Text",
-                wait_after=5
-            ): 
-                await browser.close()
-                return "retry"
+            if not await smart_action(page, lambda: page.get_by_text("Use phone number", exact=False), lambda: page.get_by_text("Country/Region"), "UsePhone_Text", wait_after=5): 
+                print_stats("FAIL: Phone Tab")
+                await browser.close(); return "retry"
 
             # --- STEP 6: COUNTRY ---
             log_msg(f"🌍 Selecting {country}...", level="step")
             
-            if not await smart_action(
-                page,
-                lambda: page.get_by_text("Hong Kong", exact=False).or_(page.locator(".arrow-icon").first),
-                lambda: page.get_by_placeholder("Search", exact=False),
-                "Open_Country_List",
-                wait_after=3
-            ): 
-                await browser.close()
-                return "retry"
+            if not await smart_action(page, lambda: page.get_by_text("Hong Kong", exact=False).or_(page.locator(".arrow-icon").first), lambda: page.get_by_placeholder("Search", exact=False), "Open_Country_List", wait_after=3): 
+                print_stats("FAIL: Country List")
+                await browser.close(); return "retry"
 
             search = page.get_by_placeholder("Search", exact=False).first
             await search.click()
@@ -366,19 +344,17 @@ async def run_session(phone, country, proxy):
                 await asyncio.sleep(3) 
             else:
                 log_msg("❌ Country Not Found", level="main")
-                await browser.close()
-                return "retry"
+                print_stats("FAIL: No Country")
+                await browser.close(); return "retry"
 
-            # --- STEP 7: INPUT PHONE (CLEANED) ---
+            # --- STEP 7: INPUT PHONE ---
             inp = page.locator("input[type='tel']").first
             if await inp.count() == 0: inp = page.locator("input").first
             
             if await inp.count() > 0:
                 clean_phone = phone
-                if country == "Russia" and clean_phone.startswith("7"):
-                    clean_phone = clean_phone[1:] 
-                elif country == "Pakistan" and clean_phone.startswith("92"):
-                    clean_phone = clean_phone[2:] 
+                if country == "Russia" and clean_phone.startswith("7"): clean_phone = clean_phone[1:] 
+                elif country == "Pakistan" and clean_phone.startswith("92"): clean_phone = clean_phone[2:] 
                 
                 log_msg(f"🔢 Inputting: {clean_phone} (Cleaned)", level="step")
                 await inp.click()
@@ -386,8 +362,7 @@ async def run_session(phone, country, proxy):
                     if not BOT_RUNNING: break
                     await page.keyboard.type(c); await asyncio.sleep(0.05)
                 
-                if live_logs:
-                    await show_red_dot(page, 350, 100)
+                if live_logs: await show_red_dot(page, 350, 100)
                 await page.touchscreen.tap(350, 100) 
                 await capture_step(page, "05_Filled")
                 
@@ -400,9 +375,14 @@ async def run_session(phone, country, proxy):
                     await asyncio.sleep(8); await capture_step(page, "06_Wait_5s_Check")
                     await asyncio.sleep(5); await capture_step(page, "07_Wait_10s_Check")
 
+                    # 🔥🔥 HERE IS THE ERROR CATCHER 🔥🔥
                     if await page.get_by_text("An unexpected problem", exact=False).count() > 0:
                         log_msg("⛔ FATAL: System Error", level="main")
                         await capture_step(page, "Error_Popup") 
+                        
+                        # ✅ یہ اب ڈیٹا پرنٹ کرے گا بند ہونے سے پہلے
+                        print_stats("FATAL ERROR") 
+                        
                         await browser.close()
                         return "failed"
 
@@ -441,17 +421,16 @@ async def run_session(phone, country, proxy):
                         await capture_step(page, "Error_Nothing")
                         result = "failed"; break
 
-                    # ڈیٹا رپورٹ پرنٹ کریں
-                    total_kb = network_usage["bytes"] / 1024
-                    log_msg(f"📊 DATA USED: {total_kb:.2f} KB ({total_kb/1024:.4f} MB)", level="main")
+                    # ✅ فائنل رپورٹ (Success or Fail)
+                    print_stats(f"DONE ({result})")
                     
                     await browser.close()
                     return result
 
                 else:
                     log_msg("❌ Get Code Missing", level="step")
-                    await browser.close()
-                    return "retry"
+                    print_stats("FAIL: No Button")
+                    await browser.close(); return "retry"
 
             await browser.close()
             return "retry"
