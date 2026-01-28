@@ -15,7 +15,7 @@ from playwright.async_api import async_playwright
 # --- 🔥 USER SETTINGS ---
 # اگر یہ True ہے تو ہر سٹیپ کی تصویر بنے گی۔
 # اگر یہ False ہے تو کوئی بھی تصویر نہیں بنے گی (Data بچانے کے لیے)۔
-live_logs = True 
+live_logs = False 
 
 # --- CONFIG ---
 CAPTURE_DIR = "./captures"
