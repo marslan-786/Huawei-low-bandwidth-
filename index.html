@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Huawei Bot Manager</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        :root { --bg: #0f172a; --panel: #1e293b; --accent: #3b82f6; --text: #e2e8f0; --green: #10b981; --red: #ef4444; --orange: #f59e0b; }
+        body { margin: 0; font-family: 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); overflow-x: hidden; }
+        
+        .header { display: flex; justify-content: space-between; align-items: center; padding: 15px 20px; background: var(--panel); border-bottom: 1px solid #334155; }
+        .header h2 { margin: 0; font-size: 18px; letter-spacing: 1px; }
+        .icon-btn { background: none; border: none; color: var(--text); font-size: 20px; cursor: pointer; transition: 0.2s; }
+        .icon-btn:hover { color: var(--accent); }
+
+        .container { display: flex; flex-direction: column; padding: 20px; gap: 20px; height: calc(100vh - 80px); }
+        
+        /* STATS */
+        .stats-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; }
+        .stat-box { background: var(--panel); padding: 15px; border-radius: 10px; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3); border-top: 3px solid transparent; position: relative; }
+        .stat-box h3 { margin: 0; font-size: 12px; color: #94a3b8; font-weight: normal; }
+        .stat-box .count { font-size: 24px; font-weight: bold; margin-top: 5px; }
+        
+        /* DOWNLOAD BUTTONS */
+        .btn-dl { position: absolute; bottom: 5px; right: 5px; background: none; border: none; color: #64748b; cursor: pointer; font-size: 14px; }
+        .btn-dl:hover { color: var(--text); }
+
+        .stat-total { border-color: var(--accent); }
+        .stat-success { border-color: var(--green); }
+        .stat-failed { border-color: var(--red); }
+
+        /* CARD & UPLOAD */
+        .card { background: var(--panel); padding: 20px; border-radius: 10px; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-size: 12px; color: #94a3b8; }
+        select, input[type="text"] { width: 100%; padding: 10px; background: #0f172a; border: 1px solid #334155; color: white; border-radius: 5px; outline: none; }
+        
+        .upload-box { border: 2px dashed #334155; padding: 12px; text-align: center; border-radius: 5px; cursor: pointer; transition: 0.2s; background: #0f172a; position: relative; overflow: hidden; font-size: 13px; color: #cbd5e1; }
+        .upload-box:hover { border-color: var(--accent); background: #1e3a8a; }
+        
+        /* BUTTONS ROW */
+        .btn-row { display: flex; gap: 10px; margin-top: 15px; }
+        .btn-control { flex: 1; padding: 12px; font-size: 14px; font-weight: bold; border: none; border-radius: 6px; cursor: pointer; transition: 0.2s; text-transform: uppercase; }
+        .start { background: var(--green); color: white; }
+        .stop { background: var(--red); color: white; }
+        .clear-data { background: var(--orange); color: white; flex: 0.5; } 
+        .btn-control:hover { opacity: 0.9; }
+
+        /* TERMINAL */
+        .terminal { background: black; color: #00e676; font-family: 'Courier New', monospace; flex: 1; overflow-y: auto; padding: 15px; border-radius: 5px; font-size: 12px; border: 1px solid #333; display: flex; flex-direction: column; }
+        .terminal div { margin-bottom: 2px; word-wrap: break-word; }
+
+        /* MODALS */
+        .modal { display: none; position: fixed; top:0; left:0; width:100%; height:100%; background: rgba(0,0,0,0.9); align-items: center; justify-content: center; z-index: 1000; }
+        .modal-content { background: var(--panel); padding: 20px; width: 90%; max-width: 500px; border-radius: 10px; max-height: 80vh; overflow-y: auto; }
+        .modal-header { display: flex; justify-content: space-between; margin-bottom: 20px; border-bottom: 1px solid #333; padding-bottom: 10px; align-items: center; }
+        
+        .gallery-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 10px; }
+        .gallery-grid img { width: 100%; border-radius: 5px; border: 1px solid #444; cursor: pointer; transition: 0.2s; }
+        
+        .modal-actions { display: flex; gap: 10px; margin-top: 20px; }
+        .btn-save { background: var(--green); flex: 1; border:none; padding: 10px; color: white; border-radius: 5px; cursor: pointer; font-weight: bold; }
+        .btn-clear { background: #475569; flex: 0.5; border:none; padding: 10px; color: #cbd5e1; border-radius: 5px; cursor: pointer; transition: 0.2s; }
+        .btn-clear:hover { background: #ef4444; color: white; }
+
+        .help-box { background: #0f172a; padding: 15px; border-radius: 5px; margin-top: 10px; border: 1px solid #334155; font-size: 12px; color: #cbd5e1; display: none; }
+    </style>
+</head>
+<body>
+
+    <div id="settingsModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>⚙️ Configuration</h3>
+                <button class="icon-btn" onclick="toggleModal('settingsModal')"><i class="fas fa-times"></i></button>
+            </div>
+            
+            <div class="form-group">
+                <label>Upload Proxy List (.txt)</label>
+                <div class="upload-box" onclick="document.getElementById('proxyFile').click()">
+                    <span id="proxyFileName">Click to Upload Proxies.txt</span>
+                </div>
+                <input type="file" id="proxyFile" accept=".txt" hidden onchange="uploadFile('proxyFile', '/upload_proxies', 'proxyFileName')">
+            </div>
+
+            <div class="form-group">
+                <label>Manual Proxy <i class="fas fa-question-circle" style="color:var(--accent); cursor:pointer;" onclick="document.getElementById('proxyHelp').style.display='block'"></i></label>
+                <input type="text" id="manualProxy" placeholder="e.g. 192.168.1.1:8080">
+                <div id="proxyHelp" class="help-box">Formats: ip:port:user:pass OR user:pass@ip:port</div>
+            </div>
+
+            <div class="modal-actions">
+                <button class="btn-save" onclick="saveSettings()">Save Configuration</button>
+                <button class="btn-clear" onclick="clearProxyData()"><i class="fas fa-eraser"></i> Clear All Proxies</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="galleryModal" class="modal">
+        <div class="modal-content" style="max-width: 800px;">
+            <div class="modal-header">
+                <h3>📸 Live Session Gallery</h3>
+                <button class="icon-btn" onclick="toggleModal('galleryModal')"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="gallery-grid" id="galleryGrid"></div>
+        </div>
+    </div>
+
+    <div class="header">
+        <button class="icon-btn" onclick="openGallery()"><i class="fas fa-images"></i></button>
+        <h2>HUAWEI BOT</h2>
+        <button class="icon-btn" onclick="toggleModal('settingsModal')"><i class="fas fa-cog"></i></button>
+    </div>
+
+    <div class="container">
+        
+        <div class="stats-grid">
+            <div class="stat-box stat-total">
+                <h3>Total Loaded</h3>
+                <div class="count" id="countTotal">0</div>
+                <button class="btn-dl" onclick="downloadFile('numbers')"><i class="fas fa-download"></i></button>
+            </div>
+            <div class="stat-box stat-success">
+                <h3>Success</h3>
+                <div class="count" id="countSuccess">0</div>
+                <button class="btn-dl" onclick="downloadFile('success')"><i class="fas fa-download"></i></button>
+            </div>
+            <div class="stat-box stat-failed">
+                <h3>Failed</h3>
+                <div class="count" id="countFailed">0</div>
+                <button class="btn-dl" onclick="downloadFile('failed')"><i class="fas fa-download"></i></button>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="form-group">
+                <label>Target Country</label>
+                <select id="countrySelect" onchange="saveSettings()">
+                    <option value="Russia">Russia</option>
+                </select>
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+                <div class="upload-box" onclick="document.getElementById('numFile').click()">
+                    <span id="numFileName">📂 Upload Numbers.txt</span>
+                </div>
+                <input type="file" id="numFile" accept=".txt" hidden onchange="uploadFile('numFile', '/upload_numbers', 'numFileName')">
+            </div>
+            
+            <div class="btn-row">
+                <button id="mainBtn" class="btn-control start" onclick="toggleBot()">START</button>
+                <button class="btn-control clear-data" onclick="clearFullSystem()"><i class="fas fa-trash"></i> CLEAR</button>
+            </div>
+        </div>
+
+        <div class="terminal" id="terminal">
+            <div>> System Ready. Load numbers to begin.</div>
+        </div>
+
+    </div>
+
+    <script>
+        const countries = ["Russia", "Pakistan", "United Kingdom", "United States", "China"];
+        let isRunning = false;
+        let userScrolledUp = false; // Flag for Smart Scroll
+
+        window.onload = function() {
+            const sel = document.getElementById('countrySelect');
+            countries.forEach(c => {
+                if(c !== "Russia") {
+                    let opt = document.createElement('option');
+                    opt.value = c; opt.innerText = c;
+                    sel.appendChild(opt);
+                }
+            });
+            if(localStorage.getItem('lastCountry')) sel.value = localStorage.getItem('lastCountry');
+            if(localStorage.getItem('manualProxy')) document.getElementById('manualProxy').value = localStorage.getItem('manualProxy');
+
+            // Terminal Scroll Listener
+            const term = document.getElementById('terminal');
+            term.addEventListener('scroll', () => {
+                // If user is near bottom (within 20px), enable auto-scroll. Else disable.
+                if (term.scrollTop + term.clientHeight >= term.scrollHeight - 20) {
+                    userScrolledUp = false;
+                } else {
+                    userScrolledUp = true;
+                }
+            });
+        };
+
+        async function uploadFile(inputId, endpoint, labelId) {
+            const file = document.getElementById(inputId).files[0];
+            if(!file) return;
+            const formData = new FormData();
+            formData.append('file', file);
+            document.getElementById(labelId).innerText = "Uploading...";
+            try {
+                await fetch(endpoint, { method: 'POST', body: formData });
+                document.getElementById(labelId).innerText = "✅ " + file.name;
+            } catch(e) { alert("Upload Failed"); }
+        }
+
+        async function saveSettings() {
+            const country = document.getElementById('countrySelect').value;
+            const proxy = document.getElementById('manualProxy').value;
+            localStorage.setItem('lastCountry', country);
+            localStorage.setItem('manualProxy', proxy);
+            const formData = new FormData();
+            formData.append('country', country);
+            formData.append('manual_proxy', proxy);
+            await fetch('/update_settings', { method: 'POST', body: formData });
+            document.getElementById('settingsModal').style.display = 'none';
+        }
+
+        async function clearProxyData() {
+            if(!confirm("⚠️ Clear ALL proxies? (File and Manual Input)")) return;
+            
+            // Clear UI
+            document.getElementById('manualProxy').value = "";
+            document.getElementById('proxyFileName').innerText = "Click to Upload Proxies.txt";
+            
+            // Clear Backend File (We reuse the clear_data logic but restricted ideally, 
+            // but since there's no dedicated endpoint, we upload an empty file)
+            const emptyFile = new File([""], "proxies.txt", {type: "text/plain"});
+            const formData = new FormData();
+            formData.append('file', emptyFile);
+            
+            await fetch('/upload_proxies', { method: 'POST', body: formData }); // Overwrite with empty
+            await saveSettings(); // Clear manual proxy in backend settings
+            
+            alert("Proxies Cleared!");
+        }
+
+        async function toggleBot() {
+            const btn = document.getElementById('mainBtn');
+            if (!isRunning) {
+                await saveSettings(); 
+                await fetch('/start', {method: 'POST'});
+                btn.innerText = "STOP"; btn.className = "btn-control stop";
+                isRunning = true;
+            } else {
+                await fetch('/stop', {method: 'POST'});
+                btn.innerText = "START"; btn.className = "btn-control start";
+                isRunning = false;
+            }
+        }
+
+        async function clearFullSystem() {
+            if(!confirm("⚠️ Clear Logs, Stats, Numbers & Results? (Proxies remain)")) return;
+            await fetch('/clear_data', {method: 'POST'});
+            document.getElementById('terminal').innerHTML = "<div>> System Fully Cleared.</div>";
+            document.getElementById('countTotal').innerText = "0";
+            document.getElementById('countSuccess').innerText = "0";
+            document.getElementById('countFailed').innerText = "0";
+            document.getElementById('numFileName').innerText = "📂 Upload Numbers.txt";
+        }
+
+        function downloadFile(type) {
+            window.location.href = `/download/${type}`;
+        }
+
+        function toggleModal(id) {
+            const m = document.getElementById(id);
+            m.style.display = m.style.display === 'flex' ? 'none' : 'flex';
+        }
+
+        async function openGallery() {
+            toggleModal('galleryModal');
+        }
+
+        async function pollStatus() {
+            try {
+                const res = await fetch('/status');
+                const data = await res.json();
+                
+                // --- SMART TERMINAL LOGIC ---
+                const term = document.getElementById('terminal');
+                const newHTML = data.logs.map(l => `<div>${l}</div>`).join('');
+                
+                if(term.innerHTML !== newHTML) {
+                    term.innerHTML = newHTML;
+                    // Only scroll if user hasn't scrolled up
+                    if (!userScrolledUp) {
+                        term.scrollTop = term.scrollHeight;
+                    }
+                }
+
+                // Stats
+                document.getElementById('countTotal').innerText = data.stats.remaining;
+                document.getElementById('countSuccess').innerText = data.stats.success;
+                document.getElementById('countFailed').innerText = data.stats.failed;
+
+                // Sync State
+                const btn = document.getElementById('mainBtn');
+                if (data.running && !isRunning) {
+                    isRunning = true; btn.innerText = "STOP"; btn.className = "btn-control stop";
+                } else if (!data.running && isRunning) {
+                    isRunning = false; btn.innerText = "START"; btn.className = "btn-control start";
+                }
+
+                // Gallery Logic
+                if(document.getElementById('galleryModal').style.display === 'flex') {
+                    const grid = document.getElementById('galleryGrid');
+                    if (data.images.length === 0) {
+                        grid.innerHTML = "<p style='color:#888; text-align:center;'>No images captured yet.</p>";
+                    } else {
+                        grid.innerHTML = data.images.map(url => 
+                            `<img src="${url}" onclick="window.open('${url}', '_blank')">`
+                        ).join('');
+                    }
+                }
+
+            } catch(e) {}
+        }
+        setInterval(pollStatus, 1000);
+    </script>
+</body>
+</html>
