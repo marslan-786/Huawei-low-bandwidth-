@@ -233,6 +233,9 @@ async def master_loop():
         await asyncio.sleep(2)
 
 async def run_session(phone, country, proxy):
+    # ڈیٹا ٹریک کرنے کے لیے لوکل ویری ایبل
+    network_usage = {"bytes": 0}
+
     try:
         async with async_playwright() as p:
             launch_args = {
@@ -242,8 +245,11 @@ async def run_session(phone, country, proxy):
             if proxy: launch_args["proxy"] = proxy 
 
             log_msg("🚀 Launching...", level="step")
-            try: browser = await p.chromium.launch(**launch_args)
-            except Exception as e: log_msg(f"❌ Proxy Fail: {e}", level="main"); return "retry"
+            try: 
+                browser = await p.chromium.launch(**launch_args)
+            except Exception as e: 
+                log_msg(f"❌ Proxy Fail: {e}", level="main")
+                return "retry"
 
             pixel_5 = p.devices['Pixel 5'].copy()
             pixel_5['viewport'] = {'width': 412, 'height': 950}
@@ -252,9 +258,23 @@ async def run_session(phone, country, proxy):
             context = await browser.new_context(**pixel_5, locale="en-US", ignore_https_errors=True)
             page = await context.new_page()
 
-            # 🔥🔥🔥 BANDWIDTH SAVER (PROXY OPTIMIZATION) 🔥🔥🔥
-            # یہ فونٹس اور میڈیا کو بلاک کرتا ہے تاکہ پروکسی کا ڈیٹا ضائع نہ ہو۔
-            # نوٹ: 'image' کو بلاک نہیں کیا کیونکہ کیپچا سالور کو اس کی ضرورت ہے۔
+            # --- 🔥🔥🔥 DATA TRACKER & BANDWIDTH SAVER 🔥🔥🔥 ---
+
+            # 1. نیٹ ورک ڈیٹا گننے کا فنکشن
+            async def count_data(request):
+                try:
+                    sizes = await request.sizes()
+                    # ریکویسٹ اور ریسپانس کے ہیڈرز اور باڈی سب کا سائز جمع کریں
+                    usage = (sizes.get('requestHeadersSize', 0) + 
+                             sizes.get('requestBodySize', 0) + 
+                             sizes.get('responseHeadersSize', 0) + 
+                             sizes.get('responseBodySize', 0))
+                    network_usage["bytes"] += usage
+                except: pass
+
+            page.on("requestfinished", count_data)
+
+            # 2. بینڈوتھ سیور (فونٹس اور میڈیا بلاک کرنا)
             await page.route("**/*", lambda route: route.abort() 
                 if route.request.resource_type in ["font", "media"] 
                 else route.continue_()
@@ -268,7 +288,9 @@ async def run_session(phone, country, proxy):
                 log_msg("⏳ Page Load Wait (5s)...", level="step")
                 await asyncio.sleep(5) 
                 await capture_step(page, "01_Loaded")
-            except: return "retry"
+            except: 
+                await browser.close()
+                return "retry"
 
             # --- STEP 2: REGISTER ---
             if not await smart_action(
@@ -277,7 +299,9 @@ async def run_session(phone, country, proxy):
                 lambda: page.get_by_text("Stay informed", exact=False), 
                 "Register_Text",
                 wait_after=5
-            ): return "retry"
+            ): 
+                await browser.close()
+                return "retry"
 
             # --- STEP 3: AGREE ---
             cb = page.get_by_text("Stay informed", exact=False)
@@ -291,7 +315,9 @@ async def run_session(phone, country, proxy):
                 lambda: page.get_by_text("Date of birth", exact=False),
                 "Agree_Last",
                 wait_after=5
-            ): return "retry"
+            ): 
+                await browser.close()
+                return "retry"
 
             # --- STEP 4: DOB ---
             if not await smart_action(
@@ -300,7 +326,9 @@ async def run_session(phone, country, proxy):
                 lambda: page.get_by_text("Use phone number", exact=False),
                 "DOB_Next_Text",
                 wait_after=5
-            ): return "retry"
+            ): 
+                await browser.close()
+                return "retry"
 
             # --- STEP 5: PHONE TAB ---
             if not await smart_action(
@@ -309,7 +337,9 @@ async def run_session(phone, country, proxy):
                 lambda: page.get_by_text("Country/Region"), 
                 "UsePhone_Text",
                 wait_after=5
-            ): return "retry"
+            ): 
+                await browser.close()
+                return "retry"
 
             # --- STEP 6: COUNTRY ---
             log_msg(f"🌍 Selecting {country}...", level="step")
@@ -320,7 +350,9 @@ async def run_session(phone, country, proxy):
                 lambda: page.get_by_placeholder("Search", exact=False),
                 "Open_Country_List",
                 wait_after=3
-            ): return "retry"
+            ): 
+                await browser.close()
+                return "retry"
 
             search = page.get_by_placeholder("Search", exact=False).first
             await search.click()
@@ -333,7 +365,9 @@ async def run_session(phone, country, proxy):
                 await click_element(page, lambda: matches.first, f"Country: {country}")
                 await asyncio.sleep(3) 
             else:
-                log_msg("❌ Country Not Found", level="main"); await browser.close(); return "retry"
+                log_msg("❌ Country Not Found", level="main")
+                await browser.close()
+                return "retry"
 
             # --- STEP 7: INPUT PHONE (CLEANED) ---
             inp = page.locator("input[type='tel']").first
@@ -349,10 +383,9 @@ async def run_session(phone, country, proxy):
                 log_msg(f"🔢 Inputting: {clean_phone} (Cleaned)", level="step")
                 await inp.click()
                 for c in clean_phone:
-                    if not BOT_RUNNING: return "stopped"
+                    if not BOT_RUNNING: break
                     await page.keyboard.type(c); await asyncio.sleep(0.05)
                 
-                # ریڈ ڈاٹ بھی صرف تب آئے گا جب لائیو لاگز آن ہوں
                 if live_logs:
                     await show_red_dot(page, 350, 100)
                 await page.touchscreen.tap(350, 100) 
@@ -361,7 +394,6 @@ async def run_session(phone, country, proxy):
                 # --- STEP 8: GET CODE ---
                 get_code = page.locator(".get-code-btn").or_(page.get_by_text("Get code"))
                 if await get_code.count() > 0:
-                    
                     await click_element(page, lambda: get_code.first, "Get Code Button")
                     
                     log_msg("⏳ Hard Wait: 10s for Captcha...", level="main")
@@ -370,10 +402,11 @@ async def run_session(phone, country, proxy):
 
                     if await page.get_by_text("An unexpected problem", exact=False).count() > 0:
                         log_msg("⛔ FATAL: System Error", level="main")
-                        # Force کو ہٹا دیا گیا، اب یہ صرف تب کیپچر کرے گا اگر live_logs آن ہیں۔
                         await capture_step(page, "Error_Popup") 
-                        await browser.close(); return "failed"
+                        await browser.close()
+                        return "failed"
 
+                    result = "failed"
                     start_solve_time = time.time()
                     while BOT_RUNNING:
                         if time.time() - start_solve_time > 120: break
@@ -387,14 +420,14 @@ async def run_session(phone, country, proxy):
                             
                             if not ai_success:
                                 log_msg("⚠️ Solver Failed", level="step")
-                                await browser.close(); return "retry"
+                                result = "retry"; break
                             
                             await asyncio.sleep(5)
                             
                             if await page.get_by_text("swap 2 tiles", exact=False).count() == 0:
                                 log_msg("✅ CAPTCHA SOLVED!", level="main")
                                 await capture_step(page, "Success_Solved")
-                                await browser.close(); return "success"
+                                result = "success"; break
                             else:
                                 log_msg("🔁 Captcha still there...", level="main")
                                 continue
@@ -402,20 +435,30 @@ async def run_session(phone, country, proxy):
                         if await page.get_by_text("sent", exact=False).count() > 0:
                             log_msg("✅ CODE SENT (Direct)!", level="main")
                             await capture_step(page, "Success_Direct")
-                            await browser.close(); return "success"
+                            result = "success"; break
                         
                         log_msg("❌ No Captcha & No Success.", level="main")
                         await capture_step(page, "Error_Nothing")
-                        await browser.close(); return "failed"
+                        result = "failed"; break
+
+                    # ڈیٹا رپورٹ پرنٹ کریں
+                    total_kb = network_usage["bytes"] / 1024
+                    log_msg(f"📊 DATA USED: {total_kb:.2f} KB ({total_kb/1024:.4f} MB)", level="main")
+                    
+                    await browser.close()
+                    return result
 
                 else:
-                    log_msg("❌ Get Code Missing", level="step"); return "retry"
+                    log_msg("❌ Get Code Missing", level="step")
+                    await browser.close()
+                    return "retry"
 
-            await browser.close(); return "retry"
+            await browser.close()
+            return "retry"
 
     except Exception as e:
-        log_msg(f"❌ Error: {str(e)}", level="main"); return "retry"
-    except: return "retry"
+        log_msg(f"❌ Error: {str(e)}", level="main")
+        return "retry"
 
 # --- API ENDPOINTS ---
 @app.get("/")
