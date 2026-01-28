@@ -15,7 +15,7 @@ from playwright.async_api import async_playwright
 # --- 🔥 USER SETTINGS ---
 # اگر یہ True ہے تو ہر سٹیپ کی تصویر بنے گی۔
 # اگر یہ False ہے تو کوئی بھی تصویر نہیں بنے گی (Data بچانے کے لیے)۔
-live_logs = False 
+live_logs = True 
 
 # --- CONFIG ---
 CAPTURE_DIR = "./captures"
@@ -233,14 +233,11 @@ async def master_loop():
         await asyncio.sleep(2)
 
 async def run_session(phone, country, proxy):
-    # ڈیٹا ٹریک کرنے کے لیے ویری ایبل
     network_usage = {"bytes": 0}
 
-    # 📊 اسٹیٹس پرنٹ کرنے کا انٹرنل فنکشن (تاکہ بار بار کوڈ نہ لکھنا پڑے)
     def print_stats(status_label):
         total_kb = network_usage["bytes"] / 1024
         total_mb = total_kb / 1024
-        # یہ لائن کنسول میں پرنٹ ہوگی ہر بار جب براؤزر بند ہوگا
         log_msg(f"📉 {status_label} | Data: {total_kb:.2f} KB ({total_mb:.3f} MB)", level="main")
 
     try:
@@ -251,12 +248,9 @@ async def run_session(phone, country, proxy):
             }
             if proxy: launch_args["proxy"] = proxy 
 
-            log_msg("🚀 Launching...", level="step")
-            try: 
-                browser = await p.chromium.launch(**launch_args)
-            except Exception as e: 
-                log_msg(f"❌ Proxy Fail: {e}", level="main")
-                return "retry"
+            log_msg("🚀 Launching (Aggressive Mode)...", level="step")
+            try: browser = await p.chromium.launch(**launch_args)
+            except Exception as e: log_msg(f"❌ Proxy Fail: {e}", level="main"); return "retry"
 
             pixel_5 = p.devices['Pixel 5'].copy()
             pixel_5['viewport'] = {'width': 412, 'height': 950}
@@ -265,87 +259,73 @@ async def run_session(phone, country, proxy):
             context = await browser.new_context(**pixel_5, locale="en-US", ignore_https_errors=True)
             page = await context.new_page()
 
-            # --- 🔥 DATA TRACKER (ہر ریکویسٹ کا سائز گننا) ---
             async def count_data(request):
                 try:
                     sizes = await request.sizes()
-                    usage = (sizes.get('requestHeadersSize', 0) + 
-                             sizes.get('requestBodySize', 0) + 
-                             sizes.get('responseHeadersSize', 0) + 
-                             sizes.get('responseBodySize', 0))
+                    usage = (sizes.get('requestHeadersSize', 0) + sizes.get('requestBodySize', 0) + 
+                             sizes.get('responseHeadersSize', 0) + sizes.get('responseBodySize', 0))
                     network_usage["bytes"] += usage
                 except: pass
 
             page.on("requestfinished", count_data)
 
-            # --- 🔥 BANDWIDTH SAVER (میڈیا بلاکنگ) ---
+            # 🔥🔥🔥 AGGRESSIVE BLOCKING (CSS + FONTS + MEDIA) 🔥🔥🔥
+            # ہم 'image' کو بھی بلاک کر رہے ہیں مگر کچھ اہم Images (جیسے کیپچا) کو اجازت دیں گے۔
             await page.route("**/*", lambda route: route.abort() 
-                if route.request.resource_type in ["font", "media"] 
+                if route.request.resource_type in ["font", "media", "stylesheet", "other"] 
+                # نوٹ: اگر کیپچا نظر نہ آئے تو نیچے والی لائن میں 'image' ہٹا دیجئے گا۔
+                or (route.request.resource_type == "image" and "captcha" not in route.request.url and "svg" not in route.request.url)
                 else route.continue_()
             )
 
             # --- STEP 1: LOAD URL ---
             log_msg("🌐 Opening URL...", level="step")
             try:
-                if not BOT_RUNNING: 
-                    print_stats("STOPPED")
-                    await browser.close(); return "stopped"
-                
-                await page.goto(BASE_URL, timeout=90000)
-                log_msg("⏳ Page Load Wait (5s)...", level="step")
-                await asyncio.sleep(5) 
+                if not BOT_RUNNING: print_stats("STOPPED"); await browser.close(); return "stopped"
+                await page.goto(BASE_URL, timeout=60000) # ٹائم آؤٹ کم کر دیا تاکہ جلدی پتہ چلے
+                log_msg("⏳ Page Load Wait (3s)...", level="step")
+                await asyncio.sleep(3) 
                 await capture_step(page, "01_Loaded")
             except: 
-                print_stats("TIMEOUT") # اگر پیج لوڈ نہ ہو تو یہاں پرنٹ ہوگا
-                await browser.close()
-                return "retry"
+                print_stats("TIMEOUT"); await browser.close(); return "retry"
 
             # --- STEP 2: REGISTER ---
-            if not await smart_action(page, lambda: page.get_by_text("Register", exact=True), lambda: page.get_by_text("Stay informed", exact=False), "Register_Text", wait_after=5): 
-                print_stats("FAIL: Register")
-                await browser.close(); return "retry"
+            if not await smart_action(page, lambda: page.get_by_text("Register", exact=True), lambda: page.get_by_text("Stay informed", exact=False), "Register_Text", wait_after=3): 
+                print_stats("FAIL: Register"); await browser.close(); return "retry"
 
             # --- STEP 3: AGREE ---
             cb = page.get_by_text("Stay informed", exact=False)
             if await cb.count() > 0:
                 await click_element(page, lambda: cb, "Stay Informed Checkbox")
-                await asyncio.sleep(1)
+                await asyncio.sleep(0.5)
             
-            if not await smart_action(page, lambda: page.get_by_text("Agree", exact=False).last, lambda: page.get_by_text("Date of birth", exact=False), "Agree_Last", wait_after=5): 
-                print_stats("FAIL: Agree")
-                await browser.close(); return "retry"
+            if not await smart_action(page, lambda: page.get_by_text("Agree", exact=False).last, lambda: page.get_by_text("Date of birth", exact=False), "Agree_Last", wait_after=3): 
+                print_stats("FAIL: Agree"); await browser.close(); return "retry"
 
             # --- STEP 4: DOB ---
-            if not await smart_action(page, lambda: page.get_by_text("Next", exact=False).last, lambda: page.get_by_text("Use phone number", exact=False), "DOB_Next_Text", wait_after=5): 
-                print_stats("FAIL: DOB")
-                await browser.close(); return "retry"
+            if not await smart_action(page, lambda: page.get_by_text("Next", exact=False).last, lambda: page.get_by_text("Use phone number", exact=False), "DOB_Next_Text", wait_after=3): 
+                print_stats("FAIL: DOB"); await browser.close(); return "retry"
 
             # --- STEP 5: PHONE TAB ---
-            if not await smart_action(page, lambda: page.get_by_text("Use phone number", exact=False), lambda: page.get_by_text("Country/Region"), "UsePhone_Text", wait_after=5): 
-                print_stats("FAIL: Phone Tab")
-                await browser.close(); return "retry"
+            if not await smart_action(page, lambda: page.get_by_text("Use phone number", exact=False), lambda: page.get_by_text("Country/Region"), "UsePhone_Text", wait_after=3): 
+                print_stats("FAIL: Phone Tab"); await browser.close(); return "retry"
 
             # --- STEP 6: COUNTRY ---
             log_msg(f"🌍 Selecting {country}...", level="step")
             
-            if not await smart_action(page, lambda: page.get_by_text("Hong Kong", exact=False).or_(page.locator(".arrow-icon").first), lambda: page.get_by_placeholder("Search", exact=False), "Open_Country_List", wait_after=3): 
-                print_stats("FAIL: Country List")
-                await browser.close(); return "retry"
+            # CSS بلاک ہونے کی وجہ سے شاید ڈراپ ڈاؤن نظر نہ آئے، اس لیے ہم ڈائریکٹ سرچ ٹرائی کریں گے
+            if not await smart_action(page, lambda: page.get_by_text("Hong Kong", exact=False).or_(page.locator(".arrow-icon").first), lambda: page.get_by_placeholder("Search", exact=False), "Open_Country_List", wait_after=2): 
+                print_stats("FAIL: Country List"); await browser.close(); return "retry"
 
             search = page.get_by_placeholder("Search", exact=False).first
-            await search.click()
-            await page.keyboard.type(country, delay=50)
-            await asyncio.sleep(2)
+            await search.click(); await page.keyboard.type(country, delay=50); await asyncio.sleep(2)
             await capture_step(page, "04_Country_Typed")
             
             matches = page.get_by_text(country, exact=False)
             if await matches.count() > 0:
-                await click_element(page, lambda: matches.first, f"Country: {country}")
-                await asyncio.sleep(3) 
+                await click_element(page, lambda: matches.first, f"Country: {country}"); await asyncio.sleep(2) 
             else:
-                log_msg("❌ Country Not Found", level="main")
-                print_stats("FAIL: No Country")
-                await browser.close(); return "retry"
+                log_msg("❌ Country Not Found", level="main"); print_stats("FAIL: No Country"); await browser.close(); return "retry"
 
             # --- STEP 7: INPUT PHONE ---
             inp = page.locator("input[type='tel']").first
@@ -356,7 +336,7 @@ async def run_session(phone, country, proxy):
                 if country == "Russia" and clean_phone.startswith("7"): clean_phone = clean_phone[1:] 
                 elif country == "Pakistan" and clean_phone.startswith("92"): clean_phone = clean_phone[2:] 
                 
-                log_msg(f"🔢 Inputting: {clean_phone} (Cleaned)", level="step")
+                log_msg(f"🔢 Inputting: {clean_phone}", level="step")
                 await inp.click()
                 for c in clean_phone:
                     if not BOT_RUNNING: break
@@ -370,74 +350,42 @@ async def run_session(phone, country, proxy):
                 get_code = page.locator(".get-code-btn").or_(page.get_by_text("Get code"))
                 if await get_code.count() > 0:
                     await click_element(page, lambda: get_code.first, "Get Code Button")
-                    
-                    log_msg("⏳ Hard Wait: 10s for Captcha...", level="main")
-                    await asyncio.sleep(8); await capture_step(page, "06_Wait_5s_Check")
-                    await asyncio.sleep(5); await capture_step(page, "07_Wait_10s_Check")
+                    log_msg("⏳ Waiting for Response...", level="main")
+                    await asyncio.sleep(5); await capture_step(page, "06_Check_Resp")
 
-                    # 🔥🔥 HERE IS THE ERROR CATCHER 🔥🔥
                     if await page.get_by_text("An unexpected problem", exact=False).count() > 0:
                         log_msg("⛔ FATAL: System Error", level="main")
-                        await capture_step(page, "Error_Popup") 
-                        
-                        # ✅ یہ اب ڈیٹا پرنٹ کرے گا بند ہونے سے پہلے
-                        print_stats("FATAL ERROR") 
-                        
-                        await browser.close()
-                        return "failed"
+                        print_stats("FATAL ERROR"); await browser.close(); return "failed"
 
                     result = "failed"
                     start_solve_time = time.time()
                     while BOT_RUNNING:
-                        if time.time() - start_solve_time > 120: break
+                        if time.time() - start_solve_time > 60: break # ٹائم کم کر دیا
 
                         if await page.get_by_text("swap 2 tiles", exact=False).count() > 0:
                             log_msg("🧩 CAPTCHA FOUND!", level="main")
                             await capture_step(page, "08_Captcha_Found")
-                            
                             session_id = f"sess_{int(time.time())}"
                             ai_success = await solve_captcha(page, session_id, logger=lambda m: log_msg(m, level="step"))
-                            
-                            if not ai_success:
-                                log_msg("⚠️ Solver Failed", level="step")
-                                result = "retry"; break
-                            
+                            if not ai_success: log_msg("⚠️ Solver Failed", level="step"); result = "retry"; break
                             await asyncio.sleep(5)
-                            
                             if await page.get_by_text("swap 2 tiles", exact=False).count() == 0:
-                                log_msg("✅ CAPTCHA SOLVED!", level="main")
-                                await capture_step(page, "Success_Solved")
-                                result = "success"; break
-                            else:
-                                log_msg("🔁 Captcha still there...", level="main")
-                                continue
+                                log_msg("✅ CAPTCHA SOLVED!", level="main"); await capture_step(page, "Success_Solved"); result = "success"; break
+                            else: continue
                         
                         if await page.get_by_text("sent", exact=False).count() > 0:
-                            log_msg("✅ CODE SENT (Direct)!", level="main")
-                            await capture_step(page, "Success_Direct")
-                            result = "success"; break
+                            log_msg("✅ CODE SENT!", level="main"); await capture_step(page, "Success_Direct"); result = "success"; break
                         
-                        log_msg("❌ No Captcha & No Success.", level="main")
-                        await capture_step(page, "Error_Nothing")
-                        result = "failed"; break
+                        log_msg("❌ Checking...", level="step"); await asyncio.sleep(2)
 
-                    # ✅ فائنل رپورٹ (Success or Fail)
-                    print_stats(f"DONE ({result})")
-                    
-                    await browser.close()
-                    return result
-
+                    print_stats(f"DONE ({result})"); await browser.close(); return result
                 else:
-                    log_msg("❌ Get Code Missing", level="step")
-                    print_stats("FAIL: No Button")
-                    await browser.close(); return "retry"
+                    log_msg("❌ Get Code Missing", level="step"); print_stats("FAIL: No Button"); await browser.close(); return "retry"
 
-            await browser.close()
-            return "retry"
+            await browser.close(); return "retry"
 
     except Exception as e:
-        log_msg(f"❌ Error: {str(e)}", level="main")
-        return "retry"
+        log_msg(f"❌ Error: {str(e)}", level="main"); return "retry"
 
 # --- API ENDPOINTS ---
 @app.get("/")
